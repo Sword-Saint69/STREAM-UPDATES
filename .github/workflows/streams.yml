@@ -1,0 +1,51 @@
+name: Generate CNCVerse streams
+
+# Regenerates streams.txt / streams.m3u / streams.json with live links + clearkeys
+# every 30 minutes (and on manual trigger), then commits them to the repo.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 minutes, UTC
+  workflow_dispatch:          # manual "Run workflow" button
+  push:
+    branches: [main]          # refresh once on push too
+
+permissions:
+  contents: write             # needed to push the generated files
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate stream files
+        run: |
+          python3 cncverse.py export --out streams
+          echo "--- streams.txt (first 40 lines) ---"
+          head -40 streams/streams.txt
+
+      - name: Commit generated files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add streams/streams.txt streams/streams.m3u streams/streams.json
+          if git diff --cached --quiet; then
+            echo "No changes to streams — skipping commit."
+          else
+            git commit -m "chore: update stream links & keys — $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            git push
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cncverse-streams
+          path: streams/
+          retention-days: 7

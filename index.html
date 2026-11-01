@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CNCVerse Live Streams</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js"></script>
+<style>
+  :root{--bg:#0b0f14;--panel:#121821;--panel2:#1a2230;--line:#26303f;--txt:#dbe4ef;--dim:#8091a3;--acc:#3ddc84;--warn:#ffb020;--bad:#ff5c69;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+  header{padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:linear-gradient(var(--bg) 90%,transparent);z-index:20;backdrop-filter:blur(6px)}
+  h1{margin:0 0 6px;font-size:17px;font-weight:600}
+  h1 small{color:var(--dim);font-weight:400}
+  #stats{color:var(--dim);font-size:12px;margin-bottom:10px}
+  #playerWrap{display:none;padding:0 20px 12px}
+  #playerBox{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  #video{width:100%;max-height:56vh;background:#000;display:block}
+  #playerTitle{padding:10px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  #playerTitle b{font-size:14px}
+  #playerNote{font-size:12px;color:var(--warn)}
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px}
+  .btn:hover{border-color:var(--acc);color:var(--acc)}
+  .btn.primary{background:var(--acc);color:#08130c;border-color:var(--acc);font-weight:600}
+  #controls{display:flex;flex-wrap:wrap;gap:8px;padding:0 20px 12px}
+  #controls input,#controls select{background:var(--panel);border:1px solid var(--line);color:var(--txt);padding:7px 10px;border-radius:8px;font-size:13px}
+  #controls input{flex:1;min-width:170px}
+  #chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 20px 14px}
+  .chip{padding:5px 11px;border-radius:20px;border:1px solid var(--line);background:var(--panel);cursor:pointer;font-size:12px;color:var(--dim);user-select:none}
+  .chip.on{background:var(--acc);border-color:var(--acc);color:#08130c;font-weight:600}
+  #list{padding:0 20px 40px}
+  .grouphead{margin:18px 0 8px;font-size:13px;font-weight:700;padding:8px 12px;border-radius:8px;border:1px solid var(--line);display:flex;justify-content:space-between;background:var(--panel)}
+  .grouphead.ok{color:var(--acc);border-color:#1d5c3a}
+  .grouphead.drm{color:var(--warn);border-color:#6b4d12}
+  .grouphead.dash{color:#7fb8ff;border-color:#20455f}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:8px;cursor:pointer}
+  .card:hover{border-color:var(--acc)}
+  .card .t{font-weight:600;font-size:14px}
+  .row2{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;font-size:11px;color:var(--dim)}
+  .badge{padding:2px 8px;border-radius:10px;background:var(--panel2);border:1px solid var(--line)}
+  .badge.live{color:#fff;background:#c0392b;border-color:#e74c3c}
+  .badge.upc{color:#f6d365;border-color:#6b5d2c}
+  .badge.hls{color:var(--acc)}
+  .badge.drm{color:var(--warn)}
+  .badge.dash{color:#7fb8ff}
+  #empty{padding:40px;text-align:center;color:var(--dim)}
+  #loaderr{padding:30px;text-align:center;color:var(--bad)}
+  .kv{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-top:8px}
+  .kv input{flex:1;background:#0a0e13;border:1px solid var(--line);color:var(--dim);padding:5px 8px;border-radius:6px;font-size:11px}
+</style>
+</head>
+<body>
+<header>
+  <h1>📡 CNCVerse Live Streams <small id="srcName"></small></h1>
+  <div id="stats">loading…</div>
+</header>
+<div id="playerWrap">
+  <div id="playerBox">
+    <div id="videoSlot"></div>
+    <div id="playerTitle">
+      <div><b id="pTitle"></b> <span id="playerNote"></span></div>
+      <div id="playerActions"></div>
+    </div>
+  </div>
+</div>
+<div id="controls">
+  <input id="q" type="search" placeholder="🔍 search title / provider / category…">
+  <select id="sort">
+    <option value="type">Sort: stream type</option>
+    <option value="status">Sort: status (live first)</option>
+    <option value="provider">Sort: provider</option>
+    <option value="start">Sort: start time</option>
+    <option value="title">Sort: title (A-Z)</option>
+  </select>
+  <select id="provider"><option value="">All providers</option></select>
+  <select id="cat"><option value="">All categories</option></select>
+</div>
+<div id="chips"></div>
+<div id="list"><div id="empty">…</div></div>
+
+<script>
+// ---------- stream type classification ----------
+const TYPE_ORDER = ["hls","file","drm","dash","other"];
+const TYPE_LABEL = {
+  hls:  "▶ HLS · plays in browser",
+  file: "▶ Direct file · usually plays in browser",
+  drm:  "⚠ HLS · DRM clearkey — needs VLC / mpv / TiviMate (not browser)",
+  dash: "⚠ DASH · DRM — desktop players only",
+  other:"• Other link"
+};
+function stype(url){
+  const u = url || "";
+  if (u.includes(".m3u8")) return u.includes("clearkey") ? "drm" : "hls";
+  if (u.includes(".mpd"))  return "dash";
+  if (/\.(mp4|ts|m3u|aac|mp3)(\?|$)/i.test(u) || !u.includes(".")) return "file";
+  return "other";
+}
+// each item gets: type (best playable kind of its streams), quality list
+function buildItems(events){
+  const out = [];
+  for (const ev of events){
+    const streams = (ev.streams || []).map(s => ({...s, _t: stype(s.url)}));
+    if (!streams.length) continue;
+    const types = new Set(streams.map(s => s._t));
+    // best type = first playable one, else first in TYPE_ORDER
+    const best = TYPE_ORDER.find(t => types.has(t)) || [...types][0];
+    out.push({ ...ev, streams, type: best, key: `ev${out.length}` });
+  }
+  return out;
+}
+// ---------- state ----------
+let DATA = [], VIEW = [];
+const state = { q:"", type:null, status:null, provider:"", cat:"", sort:"type" };
+const STATUS_ORDER = {LIVE:0, UPCOMING:1, ENDED:2};
+
+// ---------- loading ----------
+(async () => {
+  let raw = null;
+  for (const p of ["./streams/streams.json", "./streams.json", "./data/streams.json"]){
+    try { const r = await fetch(p, {cache:"no-store"}); if (r.ok){ raw = await r.json(); document.getElementById("srcName").textContent = "· " + p; break; } }
+    catch(e){}
+  }
+  if (!raw){ document.getElementById("empty").outerHTML = '<div id="loaderr">No streams.json found. Run <code>python3 cncverse.py export --out streams</code> and place the files next to this page (GitHub Action does this automatically).</div>'; return; }
+  DATA = buildItems(raw);
+  fillFilters();
+  renderChips();
+  render();
+})();
+
+function fillFilters(){
+  const provs = [...new Set(DATA.map(e=>e.provider))].sort();
+  const cats  = [...new Set(DATA.map(e=>e.sport || "").filter(Boolean))].sort();
+  document.getElementById("provider").innerHTML = '<option value="">All providers</option>' + provs.map(p=>`<option>${p}</option>`).join("");
+  document.getElementById("cat").innerHTML      = '<option value="">All categories</option>' + cats.map(c=>`<option>${c}</option>`).join("");
+}
+
+function renderChips(){
+  const counts = {}; DATA.forEach(e => counts[e.type] = (counts[e.type]||0)+1);
+  const stCounts = {}; DATA.forEach(e => stCounts[e.status] = (stCounts[e.status]||0)+1);
+  const typeChips = TYPE_ORDER.filter(t=>counts[t]).map(t =>
+    `<div class="chip" data-kind="type" data-val="${t}" id="tc-${t}">${TYPE_LABEL[t].replace(/^[●▶⚠•]\s?/,"")} (${counts[t]})</div>`).join("");
+  const stChips = ["LIVE","UPCOMING","ENDED"].filter(s=>stCounts[s]).map(s =>
+    `<div class="chip" data-kind="status" data-val="${s}" id="sc-${s}">${s} (${stCounts[s]})</div>`).join("");
+  document.getElementById("chips").innerHTML = typeChips + '<span style="width:12px"></span>' + stChips;
+  document.querySelectorAll(".chip").forEach(c => c.onclick = () => {
+    const k = c.dataset.kind, v = c.dataset.val;
+    state[k] = state[k] === v ? null : v;
+    if (k==="type"){ TYPE_ORDER.forEach(t=>document.getElementById("tc-"+t)?.classList.remove("on")); if (state.type) c.classList.add("on"); }
+    else { ["LIVE","UPCOMING","ENDED"].forEach(s=>document.getElementById("sc-"+s)?.classList.remove("on")); if (state.status) c.classList.add("on"); }
+    render();
+  });
+}
+
+// ---------- filtering + sorting ----------
+function apply(){
+  const q = state.q.toLowerCase();
+  VIEW = DATA.filter(e => {
+    if (state.type   && e.type !== state.type) return false;
+    if (state.status && e.status !== state.status) return false;
+    if (state.provider && e.provider !== state.provider) return false;
+    if (state.cat && (e.sport||"") !== state.cat) return false;
+    if (q && !(`${e.title}|${e.provider}|${e.sport||""}`.toLowerCase().includes(q))) return false;
+    return true;
+  });
+  const s = state.sort;
+  if (s === "type")     VIEW.sort((a,b)=> TYPE_ORDER.indexOf(a.type)-TYPE_ORDER.indexOf(b.type) || a.provider.localeCompare(b.provider) || a.title.localeCompare(b.title));
+  if (s === "status")   VIEW.sort((a,b)=> (STATUS_ORDER[a.status]||9)-(STATUS_ORDER[b.status]||9) || a.provider.localeCompare(b.provider) || a.title.localeCompare(b.title));
+  if (s === "provider") VIEW.sort((a,b)=> a.provider.localeCompare(b.provider) || a.title.localeCompare(b.title));
+  if (s === "title")    VIEW.sort((a,b)=> a.title.localeCompare(b.title));
+  if (s === "start")    VIEW.sort((a,b)=> (a.start||"z").localeCompare(b.start||"z"));
+}
+
+// ---------- rendering ----------
+function render(){
+  apply();
+  const list = document.getElementById("list");
+  document.getElementById("stats").textContent =
+    `${DATA.length} events · ${DATA.reduce((n,e)=>n+e.streams.length,0)} streams · showing ${VIEW.length}`;
+  if (!VIEW.length){ list.innerHTML = '<div id="empty">Nothing matches the current filters.</div>'; return; }
+  let html = "";
+  if (state.sort === "type"){
+    const groups = {};
+    VIEW.forEach(e => (groups[e.type] ||= []).push(e));
+    for (const t of TYPE_ORDER.filter(t=>groups[t])){
+      html += `<div class="grouphead ${t==="hls"||t==="file"?"ok":t}"><span>${TYPE_LABEL[t]}</span><span>${groups[t].length} events</span></div>`;
+      html += groups[t].map(card).join("");
+    }
+  } else{
+    const labels = state.sort === "status" ? "status" : state.sort === "provider" ? "provider" : null;
+    if (labels){
+      const groups = {};
+      VIEW.forEach(e => (groups[state.sort==="status" ? e.status : e.provider] ||= []).push(e));
+      for (const g of Object.keys(groups).sort((a,b)=> (STATUS_ORDER[a]||9)-(STATUS_ORDER[b]||9) || a.localeCompare(b))){
+        html += `<div class="grouphead"><span>${g}</span><span>${groups[g].length} events</span></div>`;
+        html += groups[g].map(card).join("");
+      }
+    } else html = VIEW.map(card).join("");
+  }
+  list.innerHTML = html;
+  document.querySelectorAll(".card").forEach(c => c.onclick = () => openItem(VIEW.find(e => e.key === c.dataset.key), 0));
+}
+
+function card(e){
+  const b = e.status==="LIVE"?'live':e.status==="ENDED"?'end':'upc';
+  const quals = [...new Set(e.streams.map(s=>s.quality).filter(Boolean))].slice(0,4).join(" · ");
+  const typeBadge = e.type==="drm"||e.type==="dash" ? '<span class="badge drm">DRM — desktop player</span>'
+                  : '<span class="badge hls">browser-playable</span>';
+  return `<div class="card" data-key="${e.key}">
+    <div class="t">📺 ${e.title}</div>
+    <div class="row2">
+      <span class="badge ${b}">${e.status}</span>
+      ${typeBadge}
+      <span class="badge">${e.streams.length} streams${quals ? " · " + quals : ""}</span>
+      <span class="badge">${e.provider.replace(/\(tv\)/,"")}</span>
+      ${e.sport ? `<span class="badge">${e.sport}</span>` : ""}
+      ${e.start ? `<span class="badge">🕓 ${e.start.replace(":00:00 +0000","")}</span>` : ""}
+    </div></div>`;
+}
+
+// ---------- player ----------
+let video = null, hls = null;
+function ensureVideo(){
+  if (!video){
+    video = document.createElement("video");
+    video.id = "video"; video.controls = true; video.autoplay = true; video.playsInline = true;
+    document.getElementById("videoSlot").append(video);
+  }
+  return video;
+}
+function killPlayer(){ if (hls){ hls.destroy(); hls = null; } if (video){ video.pause(); video.removeAttribute("src"); video.load(); } }
+
+function openItem(ev, idx){
+  const wrap = document.getElementById("playerWrap");
+  wrap.style.display = "block";
+  wrap.scrollIntoView({behavior:"smooth", block:"start"});
+  document.getElementById("pTitle").textContent = `📺 ${ev.title}  —  ${ev.provider.replace(/\(tv\)/,"")}`;
+  window.scrollTo({top:0, behavior:"smooth"});
+  pickStream(ev);
+}
+function pickStream(ev){
+  // try best-quality plain HLS first (1080p wins), then any plain HLS, then a direct file,
+  // whatever remains (DRM/DASH) goes to the copy-out panel
+  const s = ev.streams.find(x=>x._t==="hls" && /1080/.test(x.quality||""))
+         || ev.streams.find(x=>x._t==="hls")
+         || ev.streams.find(x=>x._t==="file")
+         || ev.streams[0];
+  showStream(ev, s);
+}
+function showStream(ev, s){
+  const note = document.getElementById("playerNote");
+  const act  = document.getElementById("playerActions");
+  document.querySelectorAll(".card").forEach(c => c.style.borderColor = "");
+  killPlayer();
+  const t = s._t || stype(s.url);
+  if (t === "hls" || t === "file"){
+    const v = ensureVideo();
+    if (t === "hls" && Hls.isSupported() && !/Safari/.test(navigator.userAgent)){
+      hls = new Hls({maxBufferLength: 20});
+      hls.loadSource(s.url); hls.attachMedia(v);
+      hls.on(Hls.Events.ERROR, (e,d) => { if (d.fatal){ note.textContent = "⧗ stream died (live links rotate) — pick another."; hls.destroy(); hls=null; } });
+      note.textContent = "";
+    } else { v.src = s.url; note.textContent = ""; }
+    act.innerHTML = "";
+    const cardEl = document.querySelector(`.card[data-key="${ev.key}"]`); if (cardEl) cardEl.style.borderColor = "var(--acc)";
+  } else {
+    document.getElementById("videoSlot").innerHTML = `
+      <div style="padding:34px 20px;text-align:center;color:var(--dim)">
+        ⚠ This stream is <b style="color:var(--warn)">DRM-encrypted</b> and cannot play inside a browser.<br>
+        Copy the link (+ clearkey) below into <b>VLC / mpv / TiviMate / IPTV app</b>.
+      </div>`;
+    const copyBtn = (label, text) => `<button class="btn" data-c="${btoa(unescape(encodeURIComponent(text)))}">📋 ${label}</button>`;
+    act.innerHTML = `
+      <div class="kv">${copyBtn("copy URL", s.url)}
+      ${s.clearkey ? copyBtn("copy clearkey", s.clearkey) : ""}
+      ${copyBtn("open directly", s.url)}</div>`;
+    act.querySelectorAll("[data-c]").forEach(b => b.onclick = () => {
+      navigator.clipboard.writeText(decodeURIComponent(escape(atob(b.dataset.c))));
+      const old = b.textContent; b.textContent = "✅ copied"; setTimeout(()=> b.textContent = old, 900);
+    });
+    if (s.url) open(s.url, "_blank", "noopener");
+  }
+  document.getElementById("playerTitle").title = s.url;
+}
+
+// ---------- wire controls ----------
+document.getElementById("q").oninput = e => { state.q = e.target.value; render(); };
+document.getElementById("sort").onchange = e => { state.sort = e.target.value; render(); };
+document.getElementById("provider").onchange = e => { state.provider = e.target.value; render(); };
+document.getElementById("cat").onchange = e => { state.cat = e.target.value; render(); };
+</script>
+</body>
+</html>
