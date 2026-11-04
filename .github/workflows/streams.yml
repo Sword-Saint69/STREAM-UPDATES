@@ -5,7 +5,7 @@ name: Generate CNCVerse streams
 
 on:
   schedule:
-    - cron: "*/30 * * * *"   # every 30 minutes, UTC
+    - cron: "*/10 * * * *"   # every 30 minutes, UTC
   workflow_dispatch:          # manual "Run workflow" button
   push:
     branches: [main]          # refresh once on push too
